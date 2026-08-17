@@ -1,0 +1,6 @@
+Description=Virtual console login
+Type=simple
+ExecStart=/sbin/getty 38400 tty1
+After=05-hostname.service 06-loopback.service
+Restart=on-failure
+RestartSec=2

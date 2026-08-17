@@ -1,0 +1,6 @@
+Description=Hardware abstraction layer
+Type=oneshot
+ExecStart=/sbin/modprobe netdev
+ExecStart=/sbin/modprobe loop
+After=02-udevd.service
+Restart=no

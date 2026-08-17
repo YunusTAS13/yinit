@@ -1,0 +1,7 @@
+Description=DHCP network client
+Type=simple
+ExecStart=/sbin/udhcpc -i eth0 -n -q -f
+After=06-loopback.service 02-udevd.service
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5

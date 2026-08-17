@@ -1,0 +1,5 @@
+Description=Set hostname
+Type=oneshot
+ExecStart=/bin/hostname yinit
+After=01-filesystems.service
+Restart=no

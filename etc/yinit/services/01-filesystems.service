@@ -1,0 +1,8 @@
+Description=Mount essential filesystems
+Type=oneshot
+ExecStart=/sbin/mount -t proc proc /proc
+ExecStart=/sbin/mount -t sysfs sysfs /sys
+ExecStart=/sbin/mount -t devtmpfs devtmpfs /dev
+ExecStart=/sbin/mount -t tmpfs tmpfs /run
+ExecStart=/sbin/mount -t tmpfs tmpfs /tmp
+Restart=no

@@ -1,0 +1,7 @@
+Description=Device manager (eudev)
+Type=simple
+ExecStart=/sbin/udevd --daemon
+After=01-filesystems.service
+Restart=on-failure
+RestartSec=3
+StartLimitBurst=5

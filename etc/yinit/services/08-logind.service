@@ -1,0 +1,6 @@
+Description=Session and login manager
+Type=simple
+ExecStart=/usr/libexec/elogind/elogind
+After=04-dbus.service
+Restart=on-failure
+RestartSec=3

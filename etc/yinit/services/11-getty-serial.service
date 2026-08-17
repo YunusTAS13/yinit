@@ -1,0 +1,6 @@
+Description=Serial console login
+Type=simple
+ExecStart=/sbin/getty -L 115200 /dev/console vt100
+After=05-hostname.service 06-loopback.service
+Restart=on-failure
+RestartSec=2

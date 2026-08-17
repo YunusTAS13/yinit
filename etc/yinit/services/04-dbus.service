@@ -1,0 +1,7 @@
+Description=D-Bus message bus
+Type=simple
+ExecStart=/usr/bin/dbus-daemon --system --nofork
+After=02-udevd.service
+Restart=on-failure
+RestartSec=3
+StartLimitBurst=5
