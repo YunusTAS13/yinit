@@ -201,4 +201,6 @@ qemu-system-x86_64 \
 
 ## License / Lisans
 
-MIT
+GNU General Public License v2.0 - See [LICENSE](LICENSE) for details.
+
+GNU Genel Kamu Lisansı v2.0 - Detaylar için [LICENSE](LICENSE) dosyasına bakın.
