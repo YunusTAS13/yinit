@@ -2,6 +2,18 @@
 
 **Sürüm: 1.1**
 
+## 1.1 — Hatalar ve Düzeltmeler
+
+- Uzun log mesajlarında `snprintf`/`vsnprintf` sonrasında buffer dışına yazma riski vardı; loglama artık satır sonu ve `NUL` karakteri için yer ayırarak güvenli biçimde kısaltılıyor.
+- Sınırlandırılmamış metin kopyaları taşma ve sonlandırılmamış string riski oluşturuyordu; güvenli kopyalama yardımcısı eklendi.
+- Birden fazla `ExecStart` satırından yalnızca ilki çalışıyordu; satırlar sıralı ve hata durumunda duran şekilde çalıştırılıyor.
+- `User=` okunuyor fakat uygulanmıyordu; servis başlatılırken kullanıcı, ana grup ve supplementary gruplar uygulanıyor.
+- `ExecStartPre`, `ExecStartPost` ve `oneshot` çıkış kodları yok sayılıyordu; başarısızlıklar artık servis durumuna ve loglara yansıyor.
+- Restart sırasında `sleep()` ana döngüyü kilitliyordu; zamanlanmış ve sınırsız restart desteği eklendi.
+- Servis durdurulurken yalnızca ana PID sonlandırılıyordu; artık servis süreç grubu sonlandırılıyor.
+- Bağımlılık döngüleri sessizce kabul ediliyordu; döngüler raporlanıyor ve yükleme güvenli biçimde tamamlanıyor.
+- Kontrol socket’i herkese açıktı; izin `0600` yapıldı, boş/olmayan komutlarda hata cevabı ve hata kodu eklendi.
+
 Lightweight, fast init system for Linux. Follows the Unix philosophy - do one thing and do it well.
 
 Linux için hafif ve hızlı init sistemi. Unix felsefesini takip eder: bir şey yap, iyi yap.
