@@ -13,6 +13,7 @@
 #include <time.h>
 #include <ctype.h>
 #include <pwd.h>
+#include <grp.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -26,7 +27,7 @@
 #include <fcntl.h>
 #include <linux/reboot.h>
 
-#define YINIT_VERSION       "2.1.0"
+#define YINIT_VERSION       "1.1.0"
 #define YINIT_DIR           "/etc/yinit"
 #define YINIT_SERVICE_DIR   "/etc/yinit/services"
 #define YINIT_STATE_DIR     "/run/yinit"
@@ -40,6 +41,14 @@
 #define MAX_CMD             2048
 #define MAX_ENV             4096
 #define MAX_EXECS           16
+
+static inline void copy_str(char *dst, size_t dst_size, const char *src) {
+    if (dst_size == 0) return;
+    size_t len = src ? strlen(src) : 0;
+    if (len >= dst_size) len = dst_size - 1;
+    if (len > 0) memcpy(dst, src, len);
+    dst[len] = '\0';
+}
 
 typedef enum {
     SVC_INACTIVE, SVC_STARTING, SVC_ACTIVE, SVC_STOPPING, SVC_FAILED
@@ -82,6 +91,7 @@ typedef struct {
     int exit_code;
     int restarts;
     time_t started_at;
+    time_t next_restart_at;
     dep_t deps[MAX_DEPS];
     int dep_count;
 } svc_t;

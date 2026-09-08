@@ -14,15 +14,34 @@ static void log_msg(const char *lvl, const char *fmt, ...) {
     va_list ap;
     time_t t = time(NULL);
     struct tm *tm = localtime(&t);
-    int n = snprintf(buf, sizeof(buf), "[%04d-%02d-%02d %02d:%02d:%02d][%s] ",
+    if (!tm) return;
+
+    int prefix = snprintf(buf, sizeof(buf), "[%04d-%02d-%02d %02d:%02d:%02d][%s] ",
         tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday,
         tm->tm_hour, tm->tm_min, tm->tm_sec, lvl);
+    if (prefix < 0) return;
+
+    size_t used = (size_t)prefix;
+    if (used >= sizeof(buf) - 2) used = sizeof(buf) - 2;
+
     va_start(ap, fmt);
-    n += vsnprintf(buf+n, sizeof(buf)-n, fmt, ap);
+    int written = 0;
+    if (used < sizeof(buf) - 2) {
+        size_t available = sizeof(buf) - used - 1; /* keep room for '\n' */
+        written = vsnprintf(buf + used, available, fmt, ap);
+    }
     va_end(ap);
-    buf[n++] = '\n';
-    if (log_fd >= 0) write(log_fd, buf, n);
-    if (getpid() == 1) write(STDERR_FILENO, buf, n);
+    if (written < 0) return;
+
+    if ((size_t)written >= sizeof(buf) - used - 1)
+        used = sizeof(buf) - 2;
+    else
+        used += (size_t)written;
+
+    buf[used++] = '\n';
+    buf[used] = '\0';
+    if (log_fd >= 0) write(log_fd, buf, used);
+    if (getpid() == 1) write(STDERR_FILENO, buf, used);
 }
 #define LOG_I(...) log_msg("INFO", __VA_ARGS__)
 #define LOG_W(...) log_msg("WARN", __VA_ARGS__)
@@ -51,21 +70,21 @@ static void parse_svc(const char *path, svc_t *s) {
         char *k = strtrim(p);
         char *v = strtrim(val);
 
-        if (streq(k, "Description"))        strncpy(s->desc, v, 255);
-        else if (streq(k, "ExecStartPre"))  strncpy(s->exec_pre, v, MAX_CMD-1);
-        else if (streq(k, "ExecStartPost")) strncpy(s->exec_post, v, MAX_CMD-1);
-        else if (streq(k, "ExecStop"))      strncpy(s->exec_stop, v, MAX_CMD-1);
+        if (streq(k, "Description"))        copy_str(s->desc, sizeof(s->desc), v);
+        else if (streq(k, "ExecStartPre"))  copy_str(s->exec_pre, sizeof(s->exec_pre), v);
+        else if (streq(k, "ExecStartPost")) copy_str(s->exec_post, sizeof(s->exec_post), v);
+        else if (streq(k, "ExecStop"))      copy_str(s->exec_stop, sizeof(s->exec_stop), v);
         else if (streq(k, "ExecStart")) {
             if (s->exec_count < MAX_EXECS)
-                strncpy(s->exec[s->exec_count++], v, MAX_CMD-1);
+                copy_str(s->exec[s->exec_count++], sizeof(s->exec[0]), v);
         }
-        else if (streq(k, "WorkingDirectory")) strncpy(s->workdir, v, 511);
-        else if (streq(k, "User")) strncpy(s->user, v, 127);
+        else if (streq(k, "WorkingDirectory")) copy_str(s->workdir, sizeof(s->workdir), v);
+        else if (streq(k, "User")) copy_str(s->user, sizeof(s->user), v);
         else if (streq(k, "Environment")) {
             if (s->env[0]) strncat(s->env, " ", MAX_ENV-strlen(s->env)-1);
             strncat(s->env, v, MAX_ENV-strlen(s->env)-1);
         }
-        else if (streq(k, "CGroup")) strncpy(s->cgroup, v, 255);
+        else if (streq(k, "CGroup")) copy_str(s->cgroup, sizeof(s->cgroup), v);
         else if (streq(k, "Type")) {
             if (streq(v, "simple"))  s->type = TYPE_SIMPLE;
             if (streq(v, "forking")) s->type = TYPE_FORKING;
@@ -85,10 +104,11 @@ static void parse_svc(const char *path, svc_t *s) {
         else if (streq(k, "MemoryLimit"))     s->mem_limit = atol(v);
         else if (streq(k, "After") || streq(k, "Requires") || streq(k, "Wants")) {
             char tmp[MAX_LINE];
-            strncpy(tmp, v, MAX_LINE-1);
+            copy_str(tmp, sizeof(tmp), v);
             char *tok = strtok(tmp, " ");
             while (tok && s->dep_count < MAX_DEPS) {
-                strncpy(s->deps[s->dep_count].name, tok, MAX_NAME-1);
+                copy_str(s->deps[s->dep_count].name,
+                    sizeof(s->deps[s->dep_count].name), tok);
                 s->deps[s->dep_count].is_requires = streq(k, "Requires");
                 s->dep_count++;
                 tok = strtok(NULL, " ");
@@ -100,7 +120,7 @@ static void parse_svc(const char *path, svc_t *s) {
     /* Extract name from path */
     const char *base = strrchr(path, '/');
     base = base ? base + 1 : path;
-    strncpy(s->name, base, MAX_NAME-1);
+    copy_str(s->name, sizeof(s->name), base);
     char *dot = strrchr(s->name, '.');
     if (dot) *dot = '\0';
 }
@@ -134,10 +154,20 @@ static void sort_services(void) {
     int used[MAX_SERVICES] = {0};
 
     for (int pass = 0; pass < svc_count; pass++) {
+        int progress = 0;
         for (int i = 0; i < svc_count; i++) {
             if (used[i]) continue;
             int deps_met = 1;
             for (int j = 0; j < services[i].dep_count; j++) {
+                int known = 0;
+                for (int k = 0; k < svc_count; k++) {
+                    if (streq(services[i].deps[j].name, services[k].name)) {
+                        known = 1;
+                        if (!used[k]) deps_met = 0;
+                        break;
+                    }
+                }
+                if (!known) continue;
                 for (int k = 0; k < sorted_count; k++) {
                     if (streq(services[i].deps[j].name, sorted[k].name))
                         goto dep_found;
@@ -146,10 +176,18 @@ static void sort_services(void) {
                 break;
                 dep_found:;
             }
-            if (deps_met || pass == svc_count - 1) {
+            if (deps_met) {
                 sorted[sorted_count++] = services[i];
                 used[i] = 1;
+                progress = 1;
             }
+        }
+        if (!progress) break;
+    }
+    for (int i = 0; i < svc_count; i++) {
+        if (!used[i]) {
+            LOG_E("Dependency cycle detected; loading %s without ordering", services[i].name);
+            sorted[sorted_count++] = services[i];
         }
     }
     memcpy(services, sorted, sizeof(svc_t) * sorted_count);
@@ -196,10 +234,50 @@ static void exec_cmd(const char *cmd) {
     execv("/bin/sh", argv);
 }
 
+static int apply_identity(svc_t *s) {
+    if (!s) return 0;
+    gid_t gid = getgid();
+    if (s->user[0]) {
+        struct passwd *pw = getpwnam(s->user);
+        if (!pw) return -1;
+        gid = pw->pw_gid;
+        if (s->user[0] && initgroups(s->user, gid) < 0) return -1;
+        if (setgid(gid) < 0 || setuid(pw->pw_uid) < 0) return -1;
+    }
+    return 0;
+}
+
+static int wait_child(pid_t pid, int timeout_sec, int *status) {
+    time_t deadline = timeout_sec > 0 ? time(NULL) + timeout_sec : 0;
+    for (;;) {
+        pid_t r = waitpid(pid, status, WNOHANG);
+        if (r == pid) return 0;
+        if (r < 0 && errno == EINTR) continue;
+        if (r < 0) return -1;
+        if (deadline && time(NULL) >= deadline) return 1;
+        usleep(100000);
+    }
+}
+
+static int join_execs(svc_t *s, char *out, size_t out_size) {
+    size_t used = 0;
+    out[0] = '\0';
+    for (int i = 0; i < s->exec_count; i++) {
+        const char *cmd = s->exec[i];
+        const char *sep = i ? " && " : "";
+        size_t sep_len = strlen(sep), cmd_len = strlen(cmd);
+        if (used + sep_len + cmd_len + 1 > out_size) return -1;
+        memcpy(out + used, sep, sep_len); used += sep_len;
+        memcpy(out + used, cmd, cmd_len); used += cmd_len;
+        out[used] = '\0';
+    }
+    return used ? 0 : -1;
+}
+
 static void set_env(svc_t *s) {
     if (s->env[0]) {
         char tmp[MAX_ENV];
-        strncpy(tmp, s->env, MAX_ENV-1);
+        copy_str(tmp, sizeof(tmp), s->env);
         char *tok = strtok(tmp, " ");
         while (tok) {
             char *eq = strchr(tok, '=');
@@ -209,17 +287,29 @@ static void set_env(svc_t *s) {
     }
 }
 
-static void run_script(const char *cmd, svc_t *s) {
-    if (!cmd[0]) return;
+static int run_script(const char *cmd, svc_t *s) {
+    if (!cmd[0]) return 0;
     pid_t p = fork();
+    if (p < 0) return -1;
     if (p == 0) {
         if (s && s->workdir[0]) chdir(s->workdir);
         if (s) set_env(s);
+        if (s && apply_identity(s) < 0) _exit(126);
+        setpgid(0, 0);
         exec_cmd(cmd);
         _exit(127);
-    } else if (p > 0) {
-        waitpid(p, NULL, 0);
     }
+    setpgid(p, p);
+    int status = 0;
+    int result = wait_child(p, s ? s->timeout_sec : 0, &status);
+    if (result == 1) {
+        kill(-p, SIGTERM);
+        usleep(200000);
+        kill(-p, SIGKILL);
+        waitpid(p, &status, 0);
+        return -1;
+    }
+    return result < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0 ? -1 : 0;
 }
 
 static int check_deps(svc_t *s) {
@@ -244,7 +334,27 @@ static void start_svc(svc_t *s) {
     LOG_I("Starting: %s", s->name);
     s->state = SVC_STARTING;
 
-    run_script(s->exec_pre, s);
+    if (run_script(s->exec_pre, s) < 0) {
+        LOG_E("ExecStartPre failed: %s", s->name);
+        s->state = SVC_FAILED;
+        return;
+    }
+
+    char start_cmd[MAX_CMD * MAX_EXECS];
+    if (join_execs(s, start_cmd, sizeof(start_cmd)) < 0) {
+        LOG_E("No valid ExecStart: %s", s->name);
+        s->state = SVC_FAILED;
+        return;
+    }
+
+    if (s->type == TYPE_ONESHOT) {
+        int rc = run_script(start_cmd, s);
+        s->pid = -1;
+        s->state = rc == 0 ? SVC_ACTIVE : SVC_FAILED;
+        if (rc == 0) run_script(s->exec_post, s);
+        LOG_I("Started: %s (oneshot, rc %d)", s->name, rc);
+        return;
+    }
 
     pid_t pid = fork();
     if (pid < 0) {
@@ -257,10 +367,14 @@ static void start_svc(svc_t *s) {
         if (s->workdir[0]) chdir(s->workdir);
         if (s->nice_val != 0) nice(s->nice_val);
         set_env(s);
+        if (apply_identity(s) < 0) _exit(126);
+        setpgid(0, 0);
         prctl(PR_SET_PDEATHSIG, SIGTERM);
-        exec_cmd(s->exec[0]);
+        exec_cmd(start_cmd);
         _exit(127);
     }
+
+    setpgid(pid, pid);
 
     s->pid = pid;
     s->started_at = time(NULL);
@@ -271,15 +385,10 @@ static void start_svc(svc_t *s) {
         if (s->mem_limit > 0) cgroup_set_mem(s->cgroup, s->mem_limit);
     }
 
-    if (s->type == TYPE_ONESHOT) {
-        waitpid(pid, NULL, 0);
-        s->state = SVC_ACTIVE;
-        s->pid = -1;
-    } else {
-        s->state = SVC_ACTIVE;
-    }
+    s->state = SVC_ACTIVE;
 
-    if (s->state == SVC_ACTIVE) run_script(s->exec_post, s);
+    if (run_script(s->exec_post, s) < 0)
+        LOG_W("ExecStartPost failed: %s", s->name);
     LOG_I("Started: %s (PID %d)", s->name, pid);
 }
 
@@ -290,24 +399,26 @@ static void stop_svc(svc_t *s, int force) {
 
     if (s->pid > 0) {
         int sig = force ? SIGKILL : SIGTERM;
-        kill(s->pid, sig);
+        kill(-s->pid, sig);
         for (int i = 0; i < s->timeout_sec * 10 && s->pid > 0; i++) {
             pid_t r = waitpid(s->pid, NULL, WNOHANG);
             if (r > 0) break;
             usleep(100000);
         }
         if (s->pid > 0) {
-            kill(s->pid, SIGKILL);
+            kill(-s->pid, SIGKILL);
             waitpid(s->pid, NULL, 0);
         }
     }
 
-    run_script(s->exec_stop, s);
+    if (run_script(s->exec_stop, s) < 0)
+        LOG_W("ExecStop failed: %s", s->name);
     if (s->cgroup[0]) cgroup_destroy(s->cgroup);
 
     s->pid = -1;
     s->state = SVC_INACTIVE;
     s->restarts = 0;
+    s->next_restart_at = 0;
     LOG_I("Stopped: %s", s->name);
 }
 
@@ -315,6 +426,18 @@ static void reload_svc(svc_t *s) {
     if (s->state == SVC_ACTIVE && s->pid > 0) {
         LOG_I("Reloading: %s", s->name);
         kill(s->pid, SIGHUP);
+    }
+}
+
+static void start_due_services(void) {
+    time_t now = time(NULL);
+    for (int i = 0; i < svc_count; i++) {
+        svc_t *s = &services[i];
+        if (s->state == SVC_INACTIVE && s->next_restart_at > 0 &&
+            s->next_restart_at <= now) {
+            s->next_restart_at = 0;
+            start_svc(s);
+        }
     }
 }
 
@@ -339,12 +462,11 @@ static void reap(void) {
                     int should = (s->restart == RESTART_ALWAYS) ||
                                  (s->restart == RESTART_ON_FAILURE && code != 0) ||
                                  (s->restart == RESTART_ON_ABORT && WIFSIGNALED(status));
-                    if (should && s->restarts < s->restart_max) {
+                    if (should && (s->restart_max == 0 || s->restarts < s->restart_max)) {
                         s->restarts++;
                         LOG_I("Restarting: %s (%d/%d)", s->name, s->restarts, s->restart_max);
                         s->state = SVC_INACTIVE;
-                        sleep(s->restart_sec);
-                        start_svc(s);
+                        s->next_restart_at = time(NULL) + s->restart_sec;
                         continue;
                     }
                 }
@@ -433,7 +555,7 @@ static int setup_ctrl(void) {
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, YINIT_SOCKET, sizeof(addr.sun_path)-1);
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) { close(fd); return -1; }
-    chmod(YINIT_SOCKET, 0666);
+    chmod(YINIT_SOCKET, 0600);
     return fd;
 }
 
@@ -456,9 +578,14 @@ static void handle_ctrl(void) {
     if (len <= 0) return;
     buf[len] = '\0';
 
-    char *cmd = strtok(buf, " ");
-    char *arg = strtok(NULL, " ");
+    char *cmd = strtok(buf, " \t");
+    char *arg = strtok(NULL, " \t");
     char resp[4096] = "";
+	if (!cmd) {
+		snprintf(resp, sizeof(resp), "error: empty command\n");
+		sendto(ctrl_fd, resp, strlen(resp), 0, (struct sockaddr *)&ca, cl);
+		return;
+	}
 
     if (streq(cmd, "status")) {
         if (arg) {
@@ -469,20 +596,24 @@ static void handle_ctrl(void) {
         } else {
             for (int i = 0; i < svc_count; i++) {
                 char line[256];
-                snprintf(line, sizeof(line), "%-20s %-10s PID:%-8d %s\n",
+                snprintf(line, sizeof(line), "%-20.20s %-10.10s PID:%-8d %.200s\n",
                     services[i].name, state_str(services[i].state),
                     services[i].pid, services[i].desc);
                 strncat(resp, line, sizeof(resp)-strlen(resp)-1);
             }
         }
     } else if (streq(cmd, "start")) {
-        if (arg) { svc_t *s = find_svc(arg); if (s) start_svc(s); }
+        if (!arg) snprintf(resp, sizeof(resp), "error: service name required\n");
+        else { svc_t *s = find_svc(arg); if (s) { s->restarts = 0; s->next_restart_at = 0; start_svc(s); snprintf(resp, sizeof(resp), "Started %s\n", arg); } else snprintf(resp, sizeof(resp), "error: service not found: %s\n", arg); }
     } else if (streq(cmd, "stop")) {
-        if (arg) { svc_t *s = find_svc(arg); if (s) stop_svc(s, 0); }
+        if (!arg) snprintf(resp, sizeof(resp), "error: service name required\n");
+        else { svc_t *s = find_svc(arg); if (s) { stop_svc(s, 0); snprintf(resp, sizeof(resp), "Stopped %s\n", arg); } else snprintf(resp, sizeof(resp), "error: service not found: %s\n", arg); }
     } else if (streq(cmd, "restart")) {
-        if (arg) { svc_t *s = find_svc(arg); if (s) { stop_svc(s, 0); start_svc(s); } }
+        if (!arg) snprintf(resp, sizeof(resp), "error: service name required\n");
+        else { svc_t *s = find_svc(arg); if (s) { stop_svc(s, 0); start_svc(s); snprintf(resp, sizeof(resp), "Restarted %s\n", arg); } else snprintf(resp, sizeof(resp), "error: service not found: %s\n", arg); }
     } else if (streq(cmd, "reload")) {
-        if (arg) { svc_t *s = find_svc(arg); if (s) reload_svc(s); }
+        if (!arg) snprintf(resp, sizeof(resp), "error: service name required\n");
+        else { svc_t *s = find_svc(arg); if (s) { reload_svc(s); snprintf(resp, sizeof(resp), "Reloaded %s\n", arg); } else snprintf(resp, sizeof(resp), "error: service not found: %s\n", arg); }
     } else if (streq(cmd, "poweroff")) {
         do_shutdown = 1;
         snprintf(resp, sizeof(resp), "Power off requested\n");
@@ -543,6 +674,7 @@ int main(int argc, char *argv[]) {
 
     while (running) {
         reap();
+        start_due_services();
 
         fd_set fds;
         struct timeval tv = {0, 50000};

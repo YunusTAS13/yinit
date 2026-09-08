@@ -112,7 +112,7 @@ int main(int argc, char *argv[]) {
 
     if (send_cmd(cmd, resp, sizeof(resp)) == 0) {
         printf("%s", resp);
+        return 0;
     }
-
-    return 0;
+    return 1;
 }

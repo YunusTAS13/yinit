@@ -1,5 +1,7 @@
 # Yinit
 
+**Sürüm: 1.1**
+
 Lightweight, fast init system for Linux. Follows the Unix philosophy - do one thing and do it well.
 
 Linux için hafif ve hızlı init sistemi. Unix felsefesini takip eder: bir şey yap, iyi yap.
