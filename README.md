@@ -28,6 +28,227 @@ Linux dağıtımını ve fiziksel PC boot sürecini anlaşılır bir servis mode
 - `--check` ile mount yapmadan servis yapılandırması doğrulama.
 - Statik musl binary üretimi ve QEMU PID 1 smoke testi.
 
+## 1.2’de eskisine göre düzeltilenler
+
+Yinit 1.2 yalnızca sürüm numarası değişikliği değildir; önceki init prototipinin
+gerçek boot için kritik eksiklerini kapatan bir hardening sürümüdür.
+
+| Önceki sorun | 1.2’deki davranış |
+|---|---|
+| Birden fazla `ExecStart` satırından yalnızca ilki çalışıyordu | `Type=oneshot` için en fazla 32 komut sırayla çalışır, her dönüş kodu kontrol edilir |
+| `User=` okunuyor fakat uygulanmıyordu | UID, primary GID ve supplementary group’lar child süreçte uygulanır |
+| `WorkingDirectory`, `Environment`, `Nice` eksik/etkisizdi | Servis child’ında uygulanır |
+| `After`/`Requires` adları `.service` yüzünden eşleşmeyebiliyordu | İsimler normalize edilir; uzantılı ve uzantısız adlar çalışır |
+| Dependency sırası ve döngüler güvenilir değildi | Deterministik dependency sıralaması, eksik bağımlılık ve cycle uyarıları vardır |
+| Restart beklemesi PID 1’i `sleep()` ile kilitleyebiliyordu | Restart zamanı planlanır; ana loop çalışmaya devam eder |
+| Yalnızca ana PID öldürülüyordu | Process group ve cgroup içindeki child’lar temizlenir |
+| cgroup hataları göz ardı ediliyordu | cgroup v2 kurulur; yoksa açık warning ile process-group fallback kullanılır |
+| `oneshot`, `forking`, timeout ve post/stop kodları eksikti | Tipler, dönüş kodları, timeout ve lifecycle hook’ları denetlenir |
+| Getty’nin `setsid()` çağrısı process-group ile çakışabiliyordu | `TTY=yes` servisleri getty’nin kendi session’ını kurmasına izin verir |
+| Control socket herkese açık olabiliyordu | `/run/yinit/control.sock` `0600` root-only oluşturulur |
+| `yinitctl` hatalarda başarı döndürebiliyordu | Socket hatasında non-zero exit code ve hata cevabı verir |
+| Minimal rootfs mount/device durumuna bağımlıydı | proc/sys/dev/run/tmp/devpts ve temel device node fallback’leri hazırlanır |
+| Farklı CPU’larda static glibc binary sorun çıkarabiliyordu | Minimal sistemler için statik musl build akışı eklendi |
+| Gerçek PID 1 testi ve rollback akışı yoktu | QEMU PID 1/handoff testleri, rootfs staging ve backup’lı rollback eklendi |
+
+## Nasıl çalışır?
+
+Yinit PID 1 olarak başladığında aşağıdaki sırayı izler:
+
+1. `--version` ve `--check` gibi tanı modlarını kontrol eder.
+2. PID’in gerçekten `1` olduğunu doğrular; normal süreçte çalışmayı reddeder.
+3. `/var/log/yinit.log` açar ve `umask(022)` ayarlar.
+4. `/proc`, `/sys`, `/dev`, `/run`, `/tmp` ve `/dev/pts` mount noktalarını
+   hazırlar. Initramfs’in zaten mount ettiği noktaları `EBUSY` nedeniyle bozmaz.
+5. `/dev/null`, `/dev/zero`, `/dev/tty`, `/dev/console`, `/dev/random`,
+   `/dev/urandom` ve `/dev/ptmx` için eksik temel device node’ları oluşturmayı
+   dener.
+6. `/dev/console`’u standart input/output/error stream’lerine bağlar.
+7. `SIGCHLD`, shutdown sinyalleri ve `SIGHUP` handler’larını kurar; child
+   reaping için subreaper etkinleştirir.
+8. cgroup v2 servis izolasyonunu kurar; kernel desteklemiyorsa process-group
+   fallback’ine geçer.
+9. `0600` izinli `/run/yinit/control.sock` socket’ini açar.
+10. `/etc/yinit/services/*.service` dosyalarını parse eder, isimleri normalize
+    eder ve dependency sırasına koyar.
+11. Servisleri `After`/`Requires`/`Wants` ilişkilerine göre başlatır.
+12. Ana loop’ta child’ları reaped eder, planlı restart’ları başlatır, control
+    socket komutlarını ve reload isteklerini işler.
+13. Reboot/poweroff geldiğinde servisleri ters sırada durdurur, süreçleri temizler,
+    `sync()` çağırır ve Linux reboot ABI’ını kullanır.
+
+## Servis yaşam döngüsü
+
+Her servis için state değerleri `inactive`, `starting`, `active`, `stopping` ve
+`failed` olabilir.
+
+- `Type=simple`: ilk `ExecStart` process’i izlenir.
+- `Type=forking`: parent başarılı biçimde çıktıktan sonra servis active sayılır.
+- `Type=oneshot`: bütün `ExecStart` satırları beklenir; başarılı servis
+  dependency’ler için active/remaining state’te tutulur.
+- `Type=notify`: şu an gerçek `READY=1` protokolü yerine simple supervision
+  fallback’i kullanır ve warning loglar.
+- `Type=idle`: şu an simple supervision davranışına düşer.
+- `ExecStartPre` başarısızsa ana komut çalıştırılmaz.
+- `ExecStartPost` oneshot cgroup’u kaldırılmadan önce çalışır.
+- `ExecStop` stop sırasında çalışır.
+- `Restart=always`, `on-failure`, `on-abort` ve `no` desteklenir.
+- `RestartSec` ana PID 1 loop’unu bloklamadan bekleme planlar.
+- `StartLimitBurst` sonsuz crash-loop’u sınırlar.
+- `TimeoutStartSec` aşılırsa process group/cgroup graceful ve forceful olarak
+  sonlandırılır.
+
+## Süreç, kullanıcı ve cgroup modeli
+
+Normal servisler ayrı process group’ta başlatılır. Child süreçte şu ayarlar
+uygulanabilir:
+
+- `User=` ile kullanıcı/UID değişimi
+- `/etc/passwd` primary GID ve `/etc/group` supplementary groups
+- `WorkingDirectory=`
+- `Environment=KEY=VALUE ...`
+- `Nice=`
+- cgroup v2 varsa `MemoryLimit=`
+
+cgroup v2 mevcutsa her servis `/sys/fs/cgroup/yinit/<service>` altında tutulur.
+`cgroup.procs` ile child eklenir; stop sırasında `cgroup.kill` veya PID listesi
+kullanılır. cgroup v2 yoksa Yinit boot’u kesmez, process group’ları kullanır.
+Bu fallback bellek limiti ve tam cgroup izolasyonu sağlayamaz.
+
+## Desteklenen servis alanları
+
+| Alan | Açıklama |
+|---|---|
+| `Description` | `status` çıktısındaki açıklama |
+| `ExecStart` | Ana komut; oneshot servislerde çoklu satır |
+| `ExecStartPre` | Başlangıç öncesi senkron komut |
+| `ExecStartPost` | Başlangıç sonrası komut |
+| `ExecStop` | Stop sırasında komut |
+| `Type` | `simple`, `forking`, `oneshot`, `notify`, `idle` |
+| `After` | Başlatma sıralaması |
+| `Requires` | Gerekli servis active değilse başlangıç başarısızlığı |
+| `Wants` | Varsa sıralama; yoksa warning |
+| `Restart` | Restart politikası |
+| `RestartSec` | Planlı restart gecikmesi |
+| `StartLimitBurst` | Restart üst sınırı |
+| `TimeoutStartSec` | Senkron komut/stop timeout’u |
+| `User` | Kullanıcı adı veya UID |
+| `WorkingDirectory` | Child çalışma dizini |
+| `Environment` | Boşlukla ayrılmış environment değerleri |
+| `CGroup` | Özel güvenli cgroup alt adı |
+| `MemoryLimit` | cgroup v2 `memory.max` değeri |
+| `Nice` | Child nice değeri |
+| `TTY` | `yes/true` ile getty session istisnası |
+
+Komutlar rootfs’in `/bin/sh -c` kabuğu üzerinden çalıştırılır. Bu nedenle servis
+dosyaları güvenilir root sahibi tarafından korunmalıdır.
+
+## Güvenlik ve kontrol
+
+Yinit’in yanlışlıkla host üzerinde normal servis olarak çalışmasını önlemek için
+PID 1 dışındaki çalıştırma reddedilir. Yapılandırma kontrolü için:
+
+```sh
+./yinit --check ./etc/yinit/services
+```
+
+Control socket yalnızca root erişimine açıktır:
+
+```text
+/run/yinit/control.sock  mode 0600
+```
+
+Desteklenen `yinitctl` komutları:
+
+```sh
+yinitctl status [service]
+yinitctl start <service>
+yinitctl stop <service>
+yinitctl restart <service>
+yinitctl reload <service>
+yinitctl version
+yinitctl reboot
+yinitctl poweroff
+```
+
+Boş komut, eksik servis adı, bilinmeyen servis veya cevap alınamaması hata
+olarak raporlanır.
+
+## Repository yapısı
+
+```text
+src/yinit.c                 PID 1 ve servis yöneticisi
+src/yinit.h                 Veri yapıları, sabitler ve yardımcılar
+src/yinitctl.c              Kontrol istemcisi
+etc/yinit/services/         Varsayılan 10 servislik profil
+tools/install-rootfs.sh     Rootfs staging ve rollback destekli kurulum
+tests/qemu/smoke.sh         İzole QEMU PID 1 testi
+tests/qemu/init/handoff     /sbin/init handoff fixture’ı
+tests/qemu/services/        Smoke test servisi
+docs/PHYSICAL_BOOT.md       Fiziksel PC rollout prosedürü
+docs/RELEASE_NOTES_1.2.md  Tam 1.2 teknik sürüm notları
+Makefile                    Host, musl, check ve install hedefleri
+```
+
+## Test kanıtı
+
+1. Host derlemesi ve config check:
+
+   ```sh
+   make
+   make check
+   ```
+
+   Sonuç: `Configuration OK: 10 services`.
+
+2. PID 1 koruması:
+
+   ```sh
+   ./yinit
+   ```
+
+   Sonuç: exit code `2` ve güvenli ret mesajı.
+
+3. Portable binary:
+
+   ```sh
+   make MUSL_CC=/home/yunustas/yunuslinux/build/musl/bin/musl-gcc musl
+   ./yinit --version
+   ```
+
+   Sonuç: `Yinit 1.2`, statik musl ELF.
+
+4. QEMU doğrudan PID 1, default servis profili ve `/sbin/init` handoff
+   testleri `YINIT_QEMU_SMOKE_OK` ve `Yinit QEMU PID 1 smoke test: PASS` ile
+   tamamlandı.
+
+5. Rootfs staging aracı; mevcut init’i koruma, backup’lı `--make-default` ve
+   mevcut backup’ı ezmeme davranışlarıyla test edildi.
+
+6. `git diff --check`, `sh -n tests/qemu/smoke.sh` ve
+   `sh -n tools/install-rootfs.sh` temiz geçti.
+
+## Gerçek PC durumu ve sınırlamalar
+
+Yinit 1.2 minimal/özel Linux dağıtımlarında konsol boot’u için hazırlandı.
+YunusLinux’un mevcut initramfs’i root diski bulup `switch_root` yaptıktan sonra
+rootfs `/sbin/init` üzerinden Yinit’i başlatabilir.
+
+İlk fiziksel boot için:
+
+- musl ile static binary üret;
+- hedef rootfs’teki binary yollarını kontrol et;
+- mevcut GRUB girdisini koru;
+- ayrı USB/SSD veya geri dönüşlü boot girdisi kullan;
+- ilk beklentiyi TTY/seri login olarak belirle;
+- grafik masaüstü için display manager/session servislerini ayrıca ekle.
+
+Yinit kendi başına initramfs root disk keşfi veya `switch_root` yöneticisi
+değildir. `Type=notify` tam readiness protokolü değildir. Tam systemd unit
+uyumluluğu, grafik oturum, polkit ve her donanımda fiziksel boot garantisi
+verilmez. Gerçek fiziksel cihaz testi bu çalışma kapsamında yapılmadı; QEMU’da
+PID 1 ve `/sbin/init` handoff doğrulandı.
+
 ## Servis dosyası
 
 Dosyalar `/etc/yinit/services/*.service` altında key-value biçimindedir:
