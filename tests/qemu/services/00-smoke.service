@@ -1,0 +1,4 @@
+Description=Yinit QEMU PID 1 smoke test
+Type=oneshot
+ExecStart=/bin/sh -c 'echo YINIT_QEMU_SMOKE_OK >/dev/console'
+Restart=no

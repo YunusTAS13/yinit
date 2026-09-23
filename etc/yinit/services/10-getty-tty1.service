@@ -1,6 +1,7 @@
 Description=Virtual console login
 Type=simple
-ExecStart=/sbin/getty 38400 tty1
+TTY=yes
+ExecStart=/bin/sh -c 'if [ -x /sbin/getty ]; then exec /sbin/getty 38400 tty1; elif [ -x /usr/bin/agetty ]; then exec /usr/bin/agetty 38400 tty1; else exit 127; fi'
 After=05-hostname.service 06-loopback.service
 Restart=on-failure
 RestartSec=2

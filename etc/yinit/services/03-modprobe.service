@@ -1,6 +1,5 @@
 Description=Hardware abstraction layer
 Type=oneshot
-ExecStart=/sbin/modprobe netdev
-ExecStart=/sbin/modprobe loop
+ExecStart=/bin/sh -c 'if [ -x /sbin/modprobe ]; then /sbin/modprobe loop 2>/dev/null || true; fi'
 After=02-udevd.service
 Restart=no

@@ -1,7 +1,5 @@
 Description=Device manager (eudev)
-Type=simple
-ExecStart=/sbin/udevd --daemon
+Type=forking
+ExecStart=/bin/sh -c 'if [ -x /sbin/udevd ]; then exec /sbin/udevd --daemon; elif [ -x /usr/lib/systemd/systemd-udevd ]; then exec /usr/lib/systemd/systemd-udevd --daemon; else exit 0; fi'
 After=01-filesystems.service
-Restart=on-failure
-RestartSec=3
-StartLimitBurst=5
+Restart=no

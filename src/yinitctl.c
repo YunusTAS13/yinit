@@ -16,9 +16,13 @@ static int send_cmd(const char *cmd, char *resp, size_t resplen) {
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, tmppath, sizeof(addr.sun_path)-1);
     unlink(tmppath);
+    mode_t old_umask = umask(077);
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        umask(old_umask);
         perror("bind"); close(fd); return -1;
     }
+    umask(old_umask);
+    chmod(tmppath, 0600);
 
     struct sockaddr_un dest = {0};
     dest.sun_family = AF_UNIX;
@@ -112,7 +116,7 @@ int main(int argc, char *argv[]) {
 
     if (send_cmd(cmd, resp, sizeof(resp)) == 0) {
         printf("%s", resp);
+        return 0;
     }
-
-    return 0;
+    return 1;
 }

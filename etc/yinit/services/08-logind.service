@@ -1,6 +1,6 @@
 Description=Session and login manager
 Type=simple
-ExecStart=/usr/libexec/elogind/elogind
+ExecStart=/bin/sh -c 'if [ -x /usr/libexec/elogind/elogind ]; then exec /usr/libexec/elogind/elogind; elif [ -x /usr/lib/systemd/systemd-logind ]; then exec /usr/lib/systemd/systemd-logind; else exit 0; fi'
 After=04-dbus.service
 Restart=on-failure
 RestartSec=3

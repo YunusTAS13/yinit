@@ -1,6 +1,7 @@
 Description=Serial console login
 Type=simple
-ExecStart=/sbin/getty -L 115200 /dev/console vt100
+TTY=yes
+ExecStart=/bin/sh -c 'if [ -x /sbin/getty ]; then exec /sbin/getty -L 115200 /dev/console vt100; elif [ -x /usr/bin/agetty ]; then exec /usr/bin/agetty -L 115200 /dev/console vt100; else exit 127; fi'
 After=05-hostname.service 06-loopback.service
 Restart=on-failure
 RestartSec=2

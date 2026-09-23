@@ -1,6 +1,6 @@
 Description=D-Bus message bus
 Type=simple
-ExecStart=/usr/bin/dbus-daemon --system --nofork
+ExecStart=/bin/sh -c 'if [ -x /usr/bin/dbus-daemon ]; then exec /usr/bin/dbus-daemon --system --nofork; else exit 0; fi'
 After=02-udevd.service
 Restart=on-failure
 RestartSec=3

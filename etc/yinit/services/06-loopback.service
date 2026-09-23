@@ -1,5 +1,5 @@
 Description=Loopback network interface
 Type=simple
-ExecStart=/sbin/ifconfig lo 127.0.0.1 netmask 255.0.0.0 up
+ExecStart=/bin/sh -c 'if [ -x /sbin/ip ]; then /sbin/ip link set lo up; elif [ -x /sbin/ifconfig ]; then /sbin/ifconfig lo 127.0.0.1 netmask 255.0.0.0 up; fi'
 After=01-filesystems.service
 Restart=no

@@ -1,6 +1,6 @@
 Description=DHCP network client
 Type=simple
-ExecStart=/sbin/udhcpc -i eth0 -n -q -f
+ExecStart=/bin/sh -c 'iface=""; for net in /sys/class/net/*; do [ -e "$net" ] || continue; name=${net##*/}; [ "$name" != lo ] && iface=$name && break; done; [ -n "$iface" ] || exit 0; if [ -x /usr/bin/yunus-network ]; then exec /usr/bin/yunus-network; elif [ -x /sbin/udhcpc ]; then if [ -x /usr/lib/yunuslinux/udhcpc.script ]; then exec /sbin/udhcpc -i "$iface" -n -q -f -s /usr/lib/yunuslinux/udhcpc.script; else exec /sbin/udhcpc -i "$iface" -n -q -f; fi; elif [ -x /usr/bin/dhcpcd ]; then exec /usr/bin/dhcpcd -q -w; else exit 0; fi'
 After=06-loopback.service 02-udevd.service
 Restart=on-failure
 RestartSec=5
