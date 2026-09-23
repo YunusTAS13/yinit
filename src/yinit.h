@@ -38,7 +38,7 @@
 #define LINUX_REBOOT_CMD_POWER_OFF 0x4321FEDC
 #endif
 
-#define YINIT_VERSION       "1.3"
+#define YINIT_VERSION       "1.2"
 #define YINIT_DIR           "/etc/yinit"
 #define YINIT_SERVICE_DIR   "/etc/yinit/services"
 #define YINIT_STATE_DIR     "/run/yinit"

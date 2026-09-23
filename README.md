@@ -5,6 +5,9 @@ projesidir. Hedefi systemd’nin tüm özelliklerini kopyalamak değil; minimal 
 Linux dağıtımını ve fiziksel PC boot sürecini anlaşılır bir servis modeliyle
 çalıştırmaktır.
 
+**Sürüm: 1.2** — Ayrıntılı değişiklikler için
+[1.2 sürüm notlarına](docs/RELEASE_NOTES_1.2.md) bakın.
+
 ## Mevcut yetenekler
 
 - Gerçek PID 1 olarak çalışır; PID 1 olmayan normal süreçte yanlışlıkla
